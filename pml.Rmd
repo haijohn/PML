@@ -1,0 +1,116 @@
+---
+title: Analysis of HAR Dataset
+output: html_document
+---
+## 1. Data Cleaning
+```{r cache=TRUE, warning=FALSE, message=FALSE}
+library(caret)
+library(doMC)
+registerDoMC(cores = 8)
+har = read.csv("pml-training.csv", as.is=T)
+```
+By using the str function to examing the data, I found there are many variable with lots of NAs or empty string. So I am going to clean these variables
+```{r cache=TRUE}
+check_NA_percent = function(x) mean(is.na(x))
+## check NA percent bigger than 95%
+almost_nas_index = apply(har, 2, check_NA_percent) > 0.95
+sum(almost_nas_index)
+## remove those variables
+har = har[,!almost_nas_index]
+check_empty_percent = function(x) mean(x=="")
+## check empty string biggrt than 95%
+almost_empty_index = apply(har, 2, check_empty_percent) > 0.95
+sum(almost_empty_index)
+## remove those variables
+har = har[,!almost_empty_index]
+dim(har)
+## remove first seven variable according their meaning
+har = har[,-c(1,2,3,4,5,6,7)]
+dim(har)
+har$classe = factor(har$classe)
+```
+Finaly I get a clean dataset with 52 independent varaibles and 1 dependent variable.
+
+## 2. Fitting Models with varies methods
+Next, I will use different machine learning techniques to fit the model. first devide the har dataset into a traing dataset(75%) and testing dataset(25%).then in the training dataset create 10 fold cross validation dataset.Finally fit the model using tree(rpart), bagging(treebag), boosting(gbm) and random forest(rf).
+```{r cache=TRUE, warning=FALSE, message=FALSE}
+## Create training and testing dataset
+set.seed(1224)
+intrain = createDataPartition(y=har$classe,p=0.75,list=F)
+training = har[intrain,]
+testing = har[-intrain,]
+#rm('har')
+
+## use 10 fold cross validation
+fitControl <- trainControl(method = "cv", number = 10,  allowParallel=T)
+
+## tree
+fit_tree = train(classe ~ ., training, method='rpart', trControl=fitControl)
+
+## bagging
+fit_bag = train(classe ~ ., training, method='treebag', trControl=fitControl)
+
+
+## gardient boosting
+fit_gbm = train(classe ~ ., training, method='gbm', trControl=fitControl)
+
+
+## random forest
+fit_rf = train(classe ~ ., training, method='rf', trControl=fitControl)
+
+
+```
+
+## 3. predict and comparing the accuracy of these methods
+```{r}
+error_rate = function(pred, truth){
+    mean(pred!=truth)
+}
+## tree
+pred_tree = predict(fit_tree, testing)
+#confusionMatrix(pred_tree,testing$classe)
+(error_tree = error_rate(pred_tree, testing$classe))
+
+## bag
+pred_bag = predict(fit_bag, testing)
+#confusionMatrix(pred_bag, testing$classe)
+(error_bag = error_rate(pred_bag, testing$classe))
+
+## boosting
+pred_gbm = predict(fit_gbm, testing)
+#confusionMatrix(pred_gbm,testing$classe)
+(error_gbm = error_rate(pred_gbm, testing$classe))
+
+##
+pred_rf = predict(fit_rf, testing)
+#confusionMatrix(pred_rf,testing$classe)
+(error_rf = error_rate(pred_rf, testing$classe))
+
+## plot error rate
+error_df = data.frame(methods=c("tree","bagging","boosting","random forest"),
+                      error_rate=c(error_tree,error_bag,error_gbm,error_rf))
+ggplot(data=error_df,aes(x=methods,y=error_rate)) +geom_point(size=4,color="red")
+```
+Random forests has the lowest out of sample error rate, So I will use random forests to predict the final test set.
+
+
+## 4. Apply Model to the final test set
+```{r}
+har_test = read.csv("pml-testing.csv", as.is=T)
+har_test = har_test[,!almost_nas_index]
+har_test = har_test[,!almost_empty_index]
+har_test = har_test[,-c(1,2,3,4,5,6,7)]
+(pred = predict(fit_rf,har_test))
+#pml_write_files = function(x){
+#  n = length(x)
+#  for(i in 1:n){
+#    filename = paste0("problem_id_",i,".txt")
+#    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+#  }
+#}
+#pml_write_files(pred)
+```
+From the submit results,I get an error rate of 0%.
+
+## reference
+Ugulino, W.; Cardador, D.; Vega, K.; Velloso, E.; Milidiu, R.; Fuks, H. Wearable Computing: Accelerometers' Data Classification of Body Postures and Movements. Proceedings of 21st Brazilian Symposium on Artificial Intelligence. Advances in Artificial Intelligence - SBIA 2012. In: Lecture Notes in Computer Science. , pp. 52-61. Curitiba, PR: Springer Berlin / Heidelberg, 2012. ISBN 978-3-642-34458-9. DOI: 10.1007/978-3-642-34459-6_6
